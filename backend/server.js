@@ -12,41 +12,64 @@ const PORT = process.env.PORT || 5000;
 app.use(express.json());
 app.use(cors({ origin: 'http://localhost:3000' }));
 
-// MongoDB Connection
+// Connect to MongoDB Atlas
 mongoose.connect(process.env.MONGO_URI, {
     useNewUrlParser: true,
     useUnifiedTopology: true,
 }).then(() => console.log('MongoDB Connected'))
   .catch(err => console.error('MongoDB connection error:', err));
 
-// Admin Schema
-const AdminSchema = new mongoose.Schema({
-    username: String,
-    password: String
+// Supplier Schema
+const SupplierSchema = new mongoose.Schema({
+    supplier_id: { type: String, required: true, unique: true },
+    name: { type: String, required: true }
 });
-const Admin = mongoose.model('Admin', AdminSchema);
+const Supplier = mongoose.model('Supplier', SupplierSchema);
 
-// Inventory Schema
-const InventorySchema = new mongoose.Schema({
-    name: String,
-    category: String,
-    quantity: Number,
-    unit: String,
-    supplier: String,
-    lastStocked: { type: Date, default: Date.now }
+// Order Schema
+const OrderSchema = new mongoose.Schema({
+    order_id: { type: String, required: true, unique: true },
+    supplier_id: { type: String, required: true, ref: 'Supplier' },
+    date: { type: Date, required: true }
 });
-const Inventory = mongoose.model('Inventory', InventorySchema);
+const Order = mongoose.model('Order', OrderSchema);
 
-// Transactions Schema
-const TransactionSchema = new mongoose.Schema({
-    itemId: mongoose.Schema.Types.ObjectId,
-    type: String, // 'withdrawal' or 'restock'
-    quantity: Number,
-    studentId: String,
-    handledBy: String,
+// Customer (Student) Schema
+const CustomerSchema = new mongoose.Schema({
+    student_id: { type: String, required: true, unique: true },
+    name: { type: String, required: true },
     date: { type: Date, default: Date.now }
 });
+const Customer = mongoose.model('Customer', CustomerSchema);
+
+// Item Schema
+const ItemSchema = new mongoose.Schema({
+    item_id: { type: String, required: true, unique: true },
+    supplier_id: { type: String, required: true, ref: 'Supplier' },
+    name: { type: String, required: true },
+    quantity: { type: Number, required: true }
+});
+const Item = mongoose.model('Item', ItemSchema);
+
+// Transaction Schema
+const TransactionSchema = new mongoose.Schema({
+    transaction_id: { type: String, required: true, unique: true },
+    student_id: { type: String, required: true, ref: 'Customer' },
+    date: { type: Date, default: Date.now },
+    quantity: { type: Number, required: true }
+});
 const Transaction = mongoose.model('Transaction', TransactionSchema);
+
+// Transaction_Item Schema (Intermediate Table)
+const TransactionItemSchema = new mongoose.Schema({
+    transaction_id: { type: String, required: true, ref: 'Transaction' },
+    item_id: { type: String, required: true, ref: 'Item' },
+    quantity: { type: Number, required: true }
+});
+const TransactionItem = mongoose.model('TransactionItem', TransactionItemSchema);
+
+module.exports = { Supplier, Order, Customer, Item, Transaction, TransactionItem };
+
 
 // Admin Routes
 app.post('/admin/register', async (req, res) => {
