@@ -13,11 +13,16 @@ app.use(express.json());
 app.use(cors({ origin: 'http://localhost:3000' }));
 
 // Connect to MongoDB Atlas
-mongoose.connect(process.env.MONGO_URI, {
+// mongoose.connect(process.env.MONGO_URI, {
+//     useNewUrlParser: true,
+//     useUnifiedTopology: true,
+// }).then(() => console.log('MongoDB Connected'))
+//   .catch(err => console.error('MongoDB connection error:', err));
+mongoose.connect('mongodb://localhost:27017/inventoryDB', {
     useNewUrlParser: true,
     useUnifiedTopology: true,
-}).then(() => console.log('MongoDB Connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
+  });
+  
 
 // Supplier Schema
 const SupplierSchema = new mongoose.Schema({

@@ -1,99 +1,59 @@
-class Dashboard {
-    constructor() {
-      this.adminToken = null;
-      this.init();
-    }
-  
-    async init() {
-      this.renderDashboard();
-    }
-  
-    async login(username, password) {
-      const res = await fetch('http://localhost:5000/admin/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        this.adminToken = data.token;
-        this.renderDashboard();
-      } else {
-        alert('Login failed!');
-      }
-    }
-  
-    async fetchInventory() {
-      const res = await fetch('http://localhost:5000/inventory');
-      return res.json();
-    }
-  
-    async addItem(name, category, quantity, unit, supplier) {
-      await fetch('http://localhost:5000/inventory', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.adminToken}`
-        },
-        body: JSON.stringify({ name, category, quantity, unit, supplier })
-      });
-      this.renderDashboard();
-    }
-  
-    async withdrawItem(itemId, quantity, studentId) {
-      await fetch('http://localhost:5000/transaction/withdraw', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemId, quantity, studentId })
-      });
-      this.renderDashboard();
-    }
-  
-    renderLogin() {
-      document.body.innerHTML = `
-        <div>
-          <h2>Admin Login</h2>
-          <input id="username" placeholder="Username" />
-          <input id="password" type="password" placeholder="Password" />
-          <button onclick="dashboard.login(document.getElementById('username').value, document.getElementById('password').value)">Login</button>
-        </div>
-      `;
-    }
-  
-    async renderDashboard() {
-      const inventory = await this.fetchInventory();
-      document.body.innerHTML = `
-        <h2>Inventory Management</h2>
-        <div>
-          <input id="name" placeholder="Item Name" />
-          <input id="category" placeholder="Category" />
-          <input id="quantity" type="number" placeholder="Quantity" />
-          <input id="unit" placeholder="Unit" />
-          <input id="supplier" placeholder="Supplier" />
-          <button onclick="dashboard.addItem(
-            document.getElementById('name').value,
-            document.getElementById('category').value,
-            document.getElementById('quantity').value,
-            document.getElementById('unit').value,
-            document.getElementById('supplier').value
-          )">Add Item</button>
-        </div>
-        <h2>Withdraw Item</h2>
-        <div>
-          <select id="itemId">
-            ${inventory.map(item => `<option value="${item._id}">${item.name} (${item.quantity})</option>`).join('')}
-          </select>
-          <input id="withdrawQuantity" type="number" placeholder="Quantity" />
-          <input id="studentId" placeholder="Student ID" />
-          <button onclick="dashboard.withdrawItem(
-            document.getElementById('itemId').value,
-            document.getElementById('withdrawQuantity').value,
-            document.getElementById('studentId').value
-          )">Withdraw</button>
-        </div>
-      `;
+import React, { useState, useEffect } from 'react';
+import './App.css';
+
+const adminUsername = 'admin'; // Hardcoded admin username
+const adminPassword = 'admin123'; // Hardcoded admin password
+
+function Dashboard() {
+  const [adminToken, setAdminToken] = useState(null);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+
+  // Handle login process
+  function handleLogin() {
+    if (username === adminUsername && password === adminPassword) {
+      setAdminToken('dummy-token'); // Simulate token setting on successful login
+      setErrorMessage('');
+    } else {
+      setErrorMessage('Invalid username or password!');
     }
   }
-  
-  const dashboard = new Dashboard();
-  
+
+  return adminToken ? (
+    <div className="dashboard-container">
+      <div className="inventory-card">
+        <h2 className="dashboard-title">Inventory Management</h2>
+        <ul>
+          <li>Item 1 - Quantity: 10</li>
+          <li>Item 2 - Quantity: 20</li>
+          <li>Item 3 - Quantity: 30</li>
+        </ul>
+        <button>Add Item</button>
+        <button>Withdraw Item</button>
+      </div>
+    </div>
+  ) : (
+    <div className="login-container">
+      <div className="login-card">
+        <h2>Admin Login</h2>
+        {errorMessage && <p className="error-message">{errorMessage}</p>}
+        <input
+          type="text"
+          placeholder="Username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+        />
+        <input
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        <button onClick={handleLogin}>Login</button>
+      </div>
+    </div>
+  );
+}
+
+export default Dashboard;
