@@ -1,0 +1,132 @@
+@baseUrl = http://localhost:4000
+@adminLogin = {{adminLogin.response.body.token}}
+@studentLogin = {{studentLogin.response.body.token}}
+
+### 1. Admin Register
+#@name adminLogin
+POST {{baseUrl}}/admin/register
+Content-Type: application/json
+
+{
+  "username": "admin6",
+  "password": "securepassword6"
+}
+
+### 2. Admin Login → Save Token
+# @name adminLogin
+POST {{baseUrl}}/admin/login
+Content-Type: application/json
+
+{
+  "username": "admin6",
+  "password": "securepassword6"
+}
+
+### 3. Student Registration 
+//@name studentRegister
+POST {{baseUrl}}/student/register
+Content-Type: application/json
+
+{
+  "student_id": "BA12345",
+  "name": "Test3 Student",
+  "email": "test3@umbc.edu",
+  "password": "studentpass3"
+}
+
+### Student Login
+# @name studentLogin
+POST {{baseUrl}}/student/login
+Content-Type: application/json
+
+{
+  "identifier": "BC12345",
+  "password": "studentpass2"
+}
+
+### 4. Student View Inventory
+GET {{baseUrl}}/inventory
+Authorization: Bearer {{studentLogin.response.body.token}}
+
+### 5. Admin View Inventory
+GET {{baseUrl}}/inventory
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### 6. Add Inventory Item
+POST {{baseUrl}}/inventory
+Authorization: Bearer {{adminLogin.response.body.token}}
+Content-Type: application/json
+
+{
+  "item_id": "CANDY-002",
+  "name": "Starbursts",
+  "category": "Snacks",
+  "current_stock": 50,
+  "threshold": 10
+}
+
+### 7. Restock Items
+POST {{baseUrl}}/transaction/restock
+Authorization: Bearer {{adminLogin.response.body.token}}
+Content-Type: application/json
+
+{
+  "items": [
+    {
+      "item_id": "BERRY-004",
+      "quantity": 2
+    }
+  ]
+}
+
+### 8. Add items to cart
+POST {{baseUrl}}/cart/add
+Authorization: Bearer {{adminLogin.response.body.token}}
+Content-Type: application/json
+
+{
+  "items": [
+    { "item_id": "BERRY-004", "quantity": 2 },
+    { "item_id": "VEGGIE-002", "quantity": 4 }
+  ]
+}
+
+### 9. Review cart
+GET {{baseUrl}}/cart
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### 10. Update item quantity in cart
+PUT {{baseUrl}}/cart/item/VEGGIE-002
+Authorization: Bearer {{adminLogin.response.body.token}}
+Content-Type: application/json
+
+{ "quantity": 10 }
+
+### 11. Delete item in cart
+DELETE {{baseUrl}}/cart/item/BERRY-004
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### 12. Final checkout
+POST {{baseUrl}}/cart/checkout
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### 13. Admin check all order history
+GET {{baseUrl}}/orders/history/all
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### 14. User check their order history
+GET {{baseUrl}}/orders/history/my
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### 15. Admin Logout
+POST {{baseUrl}}/logout
+Authorization: Bearer {{adminLogin.response.body.token}}
+Content-Type: application/json
+
+### 16. Student Logout
+POST {{baseUrl}}/logout
+Authorization: Bearer {{studentLogin.response.body.token}}
+
+### 17. Verify Token Still Works (should fail after logout)
+GET {{baseUrl}}/inventory
+Authorization: Bearer {{adminLogin.response.body.token}}
