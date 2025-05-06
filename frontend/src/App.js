@@ -6,6 +6,7 @@ import CssBaseline from '@mui/material/CssBaseline';
 import Login from './components/Auth/Login';
 import Register from './components/Auth/Register';
 import Dashboard from './components/Dashboard/Dashboard';
+import StudentView from './components/Student/StudentView';
 import Navbar from './components/Shared/Navbar';
 import ProtectedRoute from './components/Shared/ProtectedRoute';
 
@@ -32,14 +33,17 @@ export default function App() {
       <BrowserRouter>
         <Navbar token={token} onLogout={handleLogout} />
         <Routes>
-        <Route path="/login" element={<Login setToken={setToken} />} />
-        <Route path="/register" element={<Register setToken={setToken} />} />
+          <Route path="/login" element={<Login setToken={setToken} />} />
+          <Route path="/register" element={<Register setToken={setToken} />} />
+          <Route path="/student" element={
+            <StudentView />
+          } />
           <Route path="/dashboard" element={
             <ProtectedRoute token={token}>
               <Dashboard token={token} />
             </ProtectedRoute>
           } />
-          <Route path="/" element={<Navigate to="/dashboard" />} />
+          <Route path="/" element={<Navigate to="/login" />} />
         </Routes>
       </BrowserRouter>
     </ThemeProvider>

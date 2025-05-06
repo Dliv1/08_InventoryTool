@@ -33,6 +33,7 @@ export default function InventoryManager({ token }) {
   // Existing state
   const [inventory, setInventory] = useState([]);
   const [open, setOpen] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
   const [currentItem, setCurrentItem] = useState(null);
   const [snackbar, setSnackbar] = useState({ 
     open: false, 
@@ -53,35 +54,59 @@ export default function InventoryManager({ token }) {
   // Update and Create inventory items
   const handleSubmit = async () => {
     try {
-      if (currentItem._id) {
-        await updateItem(currentItem._id, currentItem, token);
+      if (isEditMode) {
+        // For updates, create a clean update object with only the changed fields
+        const updateData = {
+          name: currentItem.name,
+          category: currentItem.category || 'uncategorized',
+          threshold: Number(currentItem.threshold) || 5
+        };
+        
+        await updateItem(currentItem._id, updateData, token);
         showSnackbar('Item updated!', 'success');
       } else {
-        await createItem(currentItem, token);
+        // For new items, ensure we only send required fields
+        const newItem = {
+          item_id: currentItem.item_id,
+          name: currentItem.name,
+          category: currentItem.category || 'uncategorized',
+          current_stock: Number(currentItem.current_stock) || 0,
+          threshold: Number(currentItem.threshold) || 5,
+          last_restocked: new Date().toISOString()
+        };
+        await createItem(newItem, token);
         showSnackbar('Item created!', 'success');
       }
       setOpen(false);
       fetchInventory();
     } catch (err) {
-      showSnackbar(err.response?.data?.message || 'Operation failed', 'error');
+      console.error('Error in handleSubmit:', err);
+      showSnackbar(err.response?.data?.message || 'Operation failed. Please check the console for details.', 'error');
     }
   };
 
   // Delete inventory item
   const handleDelete = async (id) => {
     try {
-        // First confirm deletion
-        if (window.confirm('Are you sure you want to delete this item?')) {
-          await deleteItem(id, token);
-          showSnackbar('Item deleted successfully!', 'success');
-          fetchInventory();
-        }
-      } catch (err) {
-        showSnackbar(
-          err.response?.data?.message || 'Delete failed. Item may be referenced in orders.',
-          'error'
-        );
+      // First confirm deletion
+      if (window.confirm('Are you sure you want to delete this item?')) {
+        // Optimistically remove the item from the UI
+        setInventory(prevInventory => prevInventory.filter(item => item._id !== id));
+        
+        // Make the API call
+        await deleteItem(id, token);
+        
+        // Show success message
+        showSnackbar('Item deleted successfully!', 'success');
       }
+    } catch (err) {
+      // If there's an error, refetch the inventory to restore the correct state
+      fetchInventory();
+      showSnackbar(
+        err.response?.data?.message || 'Delete failed. Please try again.',
+        'error'
+      );
+    }
   };
 
   // Add-to-Cart function
@@ -121,6 +146,7 @@ export default function InventoryManager({ token }) {
           icon={<EditIcon />}
           label="Edit"
           onClick={() => {
+            setIsEditMode(true);
             setCurrentItem(params.row);
             setOpen(true);
           }}
@@ -129,7 +155,7 @@ export default function InventoryManager({ token }) {
         <GridActionsCellItem
           icon={<DeleteIcon />}
           label="Delete"
-          onClick={() => handleDelete(params.row._id)}
+          onClick={() => handleDelete(params.row.item_id)}
           showInMenu
         />
       ],
@@ -145,6 +171,7 @@ export default function InventoryManager({ token }) {
         variant="contained" 
         startIcon={<AddIcon />}
         onClick={() => {
+          setIsEditMode(false);
           setCurrentItem({
             item_id: '',
             name: '',
@@ -163,7 +190,7 @@ export default function InventoryManager({ token }) {
       <DataGrid
         rows={inventory}
         columns={columns}
-        getRowId={(row) => row._id}
+        getRowId={(row) => row.item_id}
         pageSize={10}
         rowsPerPageOptions={[10]}
         disableSelectionOnClick
@@ -171,36 +198,59 @@ export default function InventoryManager({ token }) {
 
       {/* Edit/Add Dialog */}
       <Dialog open={open} onClose={() => setOpen(false)}>
-        <DialogTitle>{currentItem?._id ? 'Edit Item' : 'Add Item'}</DialogTitle>
+        <DialogTitle>{isEditMode ? 'Edit Item' : 'Add Item'}</DialogTitle>
         <DialogContent>
           <TextField
             margin="dense"
             label="Item ID"
             fullWidth
             value={currentItem?.item_id || ''}
-            onChange={(e) => setCurrentItem({...currentItem, item_id: e.target.value})} 
+            onChange={(e) => {
+            const newItemId = e.target.value;
+            setCurrentItem({...currentItem, item_id: newItemId});
+            if (!currentItem._id) {
+              // For new items, generate a new _id based on item_id
+              setCurrentItem({...currentItem, _id: newItemId});
+            }
+          }} 
           />
           <TextField
               margin="dense"
               label="Name"
               fullWidth
               value={currentItem?.name || ''}
-              onChange={(e) => setCurrentItem({...currentItem, name: e.target.value})}
+              onChange={(e) => {
+            const newName = e.target.value;
+            setCurrentItem({...currentItem, name: newName});
+          }}
           />
           <TextField
               margin="dense"
               label="Category"
               fullWidth
               value={currentItem?.category || ''}
-              onChange={(e) => setCurrentItem({...currentItem, category: e.target.value})}  
-          />
+              onChange={(e) => {
+            const newCategory = e.target.value;
+            setCurrentItem({...currentItem, category: newCategory});
+            if (!currentItem._id) {
+              // For new items, generate a new _id based on item_id
+              setCurrentItem({...currentItem, _id: currentItem.item_id});
+            }
+          }}          />
           <TextField
             margin="dense"
             label="Current Stock"
             type="number"
             fullWidth
             value={currentItem?.current_stock || 0}
-            onChange={(e) => setCurrentItem({...currentItem, current_stock: parseInt(e.target.value)})}
+            onChange={(e) => {
+              const newStock = parseInt(e.target.value);
+              setCurrentItem({...currentItem, current_stock: newStock});
+              if (!currentItem._id) {
+                // For new items, generate a new _id based on item_id
+                setCurrentItem({...currentItem, _id: currentItem.item_id});
+              }
+            }}
           />
           <TextField
             margin="dense"
@@ -208,7 +258,14 @@ export default function InventoryManager({ token }) {
             type="number"
             fullWidth
             value={currentItem?.threshold || 5}
-            onChange={(e) => setCurrentItem({...currentItem, threshold: parseInt(e.target.value)})}
+            onChange={(e) => {
+              const newThreshold = parseInt(e.target.value);
+              setCurrentItem({...currentItem, threshold: newThreshold});
+              if (!currentItem._id) {
+                // For new items, generate a new _id based on item_id
+                setCurrentItem({...currentItem, _id: currentItem.item_id});
+              }
+            }}
           />
         </DialogContent>
         <DialogActions>

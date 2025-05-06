@@ -4,7 +4,8 @@ import {
   addToCart,
   updateCartItem,
   removeFromCart,
-  checkoutCart 
+  checkout as checkoutCart,
+  studentCart
 } from '../../api/cart';
 import { 
     DataGrid, 
@@ -17,69 +18,109 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  IconButton 
+  IconButton,
+  Box,
+  Typography,
+  CircularProgress
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import Snackbar from '@mui/material/Snackbar';
 import Alert from '@mui/material/Alert';
 
 export default function CartManager({ token }) {
   const [cart, setCart] = useState({ items: [] });
   const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
   const fetchCart = async () => {
     try {
-      const response = await getCart(token);
-      setCart(response.data);
+      const response = token === 'student' 
+        ? await studentCart.getCart() 
+        : await getCart(token);
+      setCart(response.data || { items: [] });
     } catch (err) {
       console.error('Failed to fetch cart', err);
+      showSnackbar('Failed to load cart', 'error');
     }
   };
 
   useEffect(() => { fetchCart(); }, []);
 
-  const handleAddToCart = async (itemId, quantity = 1) => {
-    try {
-      await addToCart({ item_id: itemId, quantity }, token);
-      fetchCart();
-    } catch (err) {
-      console.error('Failed to add to cart', err);
-    }
-  };
-
   const handleUpdateQuantity = async (itemId, newQuantity) => {
+    if (newQuantity < 1) {
+      await handleRemoveItem(itemId);
+      return;
+    }
+
     try {
-      await updateCartItem(itemId, { quantity: newQuantity }, token);
-      fetchCart();
+      if (token === 'student') {
+        setIsLoading(true);
+        // Use the update endpoint for students
+        await studentCart.updateItem(itemId, { quantity: newQuantity });
+        // Refresh the cart to get the latest state
+        await fetchCart();
+      } else {
+        await updateCartItem(itemId, { quantity: newQuantity }, token);
+        fetchCart();
+      }
     } catch (err) {
       console.error('Failed to update quantity', err);
+      showSnackbar(err.response?.data?.message || 'Failed to update quantity', 'error');
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleRemoveItem = async (itemId) => {
     try {
-      await removeFromCart(itemId, token);
-      fetchCart();
+      setIsLoading(true);
+      if (token === 'student') {
+        // Use the remove endpoint for students
+        await studentCart.removeItem(itemId);
+        // Refresh the cart to get the latest state
+        await fetchCart();
+      } else {
+        await removeFromCart(itemId, token);
+        fetchCart();
+      }
+      showSnackbar('Item removed from cart', 'success');
     } catch (err) {
       console.error('Failed to remove item', err);
+      showSnackbar(err.response?.data?.message || 'Failed to remove item', 'error');
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleCheckout = async () => {
     try {
-      await checkoutCart(token);
+      setIsLoading(true);
+      if (token === 'student') {
+        await studentCart.checkout();
+      } else {
+        await checkoutCart(token);
+      }
       setCheckoutOpen(false);
       showSnackbar('Checkout successful! Order has been processed.', 'success');
-      fetchCart();
-
+      // Clear the cart after successful checkout
+      setCart({ items: [] });
     } catch (err) {
+      console.error('Checkout failed:', err);
       showSnackbar(
         err.response?.data?.message || 'Checkout failed. Please try again.',
         'error'
       );
+    } finally {
+      setIsLoading(false);
     }
+  };
+
+  // Add a refresh button to manually refresh the cart
+  const handleRefresh = () => {
+    fetchCart();
   };
 
   const [snackbar, setSnackbar] = useState({
@@ -132,13 +173,35 @@ export default function CartManager({ token }) {
 
   return (
     <div>
-      <div style={{ height: 400, width: '100%', marginBottom: 20 }}>
-        <DataGrid
-          rows={cart.items}
-          columns={columns}
-          getRowId={(row) => row.item_id}
-        />
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
+        <h2>Your Cart</h2>
+        <Button 
+          variant="outlined" 
+          onClick={handleRefresh}
+          startIcon={isLoading ? <CircularProgress size={20} /> : <RefreshIcon />}
+          disabled={isLoading}
+        >
+          Refresh
+        </Button>
       </div>
+      
+      {cart.items.length === 0 ? (
+        <Box textAlign="center" p={4}>
+          <Typography variant="h6" color="textSecondary">
+            Your cart is empty
+          </Typography>
+        </Box>
+      ) : (
+        <div style={{ height: 400, width: '100%', marginBottom: 20 }}>
+          <DataGrid
+            rows={cart.items}
+            columns={columns}
+            getRowId={(row) => row.item_id}
+            loading={isLoading}
+            disableSelectionOnClick
+          />
+        </div>
+      )}
 
       <Button 
         variant="contained" 

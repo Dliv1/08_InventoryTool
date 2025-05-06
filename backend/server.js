@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const session = require('express-session');
 require('dotenv').config();
 
 const app = express();
@@ -11,14 +12,27 @@ const PORT = process.env.PORT || 4000;
 // Middleware
 app.use(cors({
   origin: 'http://localhost:3000',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
   optionsSuccessStatus: 200 // For legacy browser support
 }));
 
+// Parse JSON bodies
 app.use(express.json());
-app.use(cors({ origin: 'http://localhost:3000' }));
+
+// Configure session middleware
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { 
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
 
 // Connect to MongoDB Atlas
 console.log("Connecting to:", process.env.MONGO_URI);
@@ -74,13 +88,12 @@ const Order = mongoose.model('Order', OrderSchema);
   });
 const Student = mongoose.model('Student', StudentSchema);
 
-
 // Item Schema
 const ItemSchema = new mongoose.Schema({
-    item_id: { type: String, required: true, unique: true },
-    supplier_id: { type: String, required: true, ref: 'Supplier' },
-    name: { type: String, required: true },
-    quantity: { type: Number, required: true }
+  item_id: { type: String, required: true, unique: true },
+  supplier_id: { type: String, required: true, ref: 'Supplier' },
+  name: { type: String, required: true },
+  quantity: { type: Number, required: true }
 });
 const Item = mongoose.model('Item', ItemSchema);
 
@@ -108,15 +121,16 @@ const TransactionItem = mongoose.model('TransactionItem', TransactionItemSchema)
 
 //Inventory Schema (new add)
 const InventorySchema = new mongoose.Schema({
-    item_id: { type: String, required: true, unique: true },
-    name: { type: String, required: true },
-    category: { type: String, required: true },
-    current_stock: { type: Number, required: true, min: 0 },
-    threshold: { type: Number, required: true }, // Low stock alert level
-    last_restocked: { type: Date },
-    demand_score: { type: Number, default: 0 } // For analytics
+  item_id: { type: String, required: true, unique: true },
+  name: { type: String, required: true },
+  category: { type: String, required: true },
+  current_stock: { type: Number, required: true, min: 0 },
+  threshold: { type: Number, required: true }, // Low stock alert level
+  last_restocked: { type: Date },
+  demand_score: { type: Number, default: 0 } // For analytics
 });
 const Inventory = mongoose.model('Inventory', InventorySchema);
+
 
 /**
  * Admin Schema
@@ -139,7 +153,7 @@ const CartSchema = new mongoose.Schema({
   });
 const Cart = mongoose.model('Cart', CartSchema);
 
-module.exports = { Supplier, Order, Student, Item, Transaction, TransactionItem, Inventory, Admin, Cart };
+module.exports = { Supplier, Order, Student, Item, Transaction, TransactionItem, Admin, Cart, Inventory };
 
 /* ========== AUTH MIDDLEWARE ========== */
 
@@ -210,18 +224,21 @@ app.post('/logout', authMiddleware, (req, res) => {
  */
  app.post('/admin/login', async (req, res) => {
     try {
+      console.log('Login attempt:', req.body);
       const { username, password } = req.body;
       const admin = await Admin.findOne({ username });
   
+      console.log('Found admin:', admin ? 'Yes' : 'No');
       if (!admin) return res.status(401).json({ message: 'Invalid credentials' });
   
       const isMatch = await bcrypt.compare(password, admin.password);
+      console.log('Password match:', isMatch ? 'Yes' : 'No');
       if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
   
       const token = jwt.sign(
         { 
-          id: admin._id.toString(), //changed      // MongoDB ObjectID
-          userType: 'admin'    // Explicit type
+          id: admin._id.toString(),
+          userType: 'admin'
         },
         process.env.JWT_SECRET,
         { expiresIn: '24h' }
@@ -229,6 +246,7 @@ app.post('/logout', authMiddleware, (req, res) => {
   
       res.json({ token, user: admin });
     } catch (err) {
+      console.error('Login error:', err);
       res.status(500).json({ message: err.message });
     }
   });
@@ -335,34 +353,77 @@ app.post('/logout', (req, res) => {
  * - Students see only available items
  * - Admins see full inventory with analytics
  */
- app.get('/inventory', authMiddleware, async (req, res) => {
-    try {
-      const items = await Inventory.find();
-      res.json(items);
-    } catch (err) {
-      res.status(500).json({ message: err.message });
+ app.get('/inventory', async (req, res) => {
+  // Check if this is a student request (no token)
+  const isStudent = !req.headers.authorization || req.headers.authorization === 'student';
+  try {
+    // Admins see all items, students see only active items
+    if (req.user?.role === 'admin') {
+      // Admin view with analytics
+      const inventory = await Inventory.find();
+      res.json(inventory);
+    } else {
+      // Student view - only show available items
+      const inventory = await Inventory.find({ current_stock: { $gt: 0 } });
+      res.json(inventory);
     }
-  });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 
 /**
  * Create Inventory Item (Admin Only)
  * Auto-calculates threshold if not provided (20% of initial stock)
  */
 
- app.post('/inventory', authMiddleware, async (req, res) => {
-    try {
-      if (!req.body.threshold) {
-        req.body.threshold = Math.floor(req.body.current_stock * 0.2);
-      }
-      
-      const newItem = new Inventory(req.body);
-      await newItem.save();
-      res.status(201).json(newItem);
-    } catch (err) {
-      res.status(400).json({ message: err.message });
+app.post('/inventory', authMiddleware, async (req, res) => {
+  try {
+    // Validate required fields
+    const requiredFields = ['item_id', 'name', 'category', 'current_stock'];
+    const missingFields = requiredFields.filter(field => !req.body[field]);
+    
+    if (missingFields.length > 0) {
+      return res.status(400).json({ 
+        message: `Missing required fields: ${missingFields.join(', ')}` 
+      });
     }
-  });
 
+    // Check for existing item with same item_id or name
+    const existingItem = await Inventory.findOne({
+      $or: [
+        { item_id: req.body.item_id },
+        { name: req.body.name }
+      ]
+    });
+
+    if (existingItem) {
+      return res.status(400).json({
+        message: 'An item with this ID or name already exists'
+      });
+    }
+
+    // Create new item with default values if not provided
+    const newItem = new Inventory({
+      item_id: req.body.item_id,
+      name: req.body.name,
+      category: req.body.category,
+      current_stock: Number(req.body.current_stock) || 0,
+      threshold: Number(req.body.threshold) || Math.floor((req.body.current_stock || 0) * 0.2),
+      last_restocked: req.body.last_restocked || new Date(),
+      active: true
+    });
+    
+    await newItem.save();
+    res.status(201).json(newItem);
+  } catch (err) {
+    console.error('Error creating item:', err);
+    res.status(400).json({ 
+      message: err.message,
+      ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    });
+  }
+});
 
 /**
  * Update Inventory Item (Admin Only)
@@ -377,9 +438,13 @@ app.post('/logout', (req, res) => {
           message: 'Use transaction endpoints to modify stock levels' 
         });
       }
-  
+
+      // Find and update the item in a single operation
       const updatedItem = await Inventory.findOneAndUpdate(
-        { item_id: req.params.id },
+        { $or: [
+          { item_id: req.params.id },
+          { _id: req.params.id }
+        ] },
         req.body,
         { new: true, runValidators: true }
       );
@@ -390,7 +455,11 @@ app.post('/logout', (req, res) => {
       
       res.json(updatedItem);
     } catch (err) {
-      res.status(400).json({ message: err.message });
+      console.error('Error updating item:', err);
+      res.status(400).json({ 
+        message: err.message,
+        ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+      });
     }
   });
 
@@ -401,41 +470,52 @@ app.post('/logout', (req, res) => {
  * - Maintains database integrity
  */
  app.delete('/inventory/:id', authMiddleware, async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+  const session = await mongoose.startSession();
   
-    try {
-      const hasTransactions = await TransactionItem.exists({ 
-        item_id: req.params.id 
-      }).session(session);
-  
-      if (hasTransactions) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          message: 'Cannot delete - item has transaction history'
-        });
-      }
-  
-      const deletedItem = await Inventory.findOneAndDelete(
+  try {
+    await session.withTransaction(async () => {
+      console.log('Attempting to delete item with ID:', req.params.id);
+      
+      // First find the item by item_id (not _id)
+      const itemToDelete = await Inventory.findOne(
         { item_id: req.params.id },
+        null,
         { session }
       );
-  
-      if (!deletedItem) {
-        await session.abortTransaction();
-        return res.status(404).json({ message: 'Item not found' });
+
+      if (!itemToDelete) {
+        throw new Error('Item not found');
       }
 
-    await session.commitTransaction();
-    res.json({ 
-      success: true,
-      message: `Item ${deletedItem.name} (${deletedItem.item_id}) deleted`
-    });
+      // Now delete using the found item's _id with session
+      const deletedItem = await Inventory.findByIdAndDelete(
+        itemToDelete._id,
+        { session }
+      );
+
+      if (!deletedItem) {
+        throw new Error('Error deleting item');
+      }
+
+      // Delete related transactions using the item_id with session
+      await Transaction.deleteMany(
+        { item_id: itemToDelete.item_id },
+        { session }
+      );
+
+      res.json({
+        message: `Item ${deletedItem.name} (${deletedItem.item_id}) deleted successfully`
+      });
+    }, { session });
   } catch (err) {
-    await session.abortTransaction();
-    res.status(500).json({ message: err.message });
+    console.error('Error deleting item:', err);
+    const statusCode = err.message === 'Item not found' ? 404 : 500;
+    res.status(statusCode).json({ 
+      message: err.message,
+      ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    });
   } finally {
-    session.endSession();
+    await session.endSession();
   }
 });
 
@@ -447,64 +527,327 @@ app.post('/logout', (req, res) => {
  * - Stock level updates
  * - Restock timestamp
  */
- app.post('/transaction/restock', authMiddleware, async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+app.post('/transaction/restock', authMiddleware, async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { items } = req.body;
+    const transaction = new Transaction({
+      transaction_id: `TXN-${Date.now()}`,
+      user_id: req.user._id || req.user.student_id,
+      type: 'restock',
+      date: new Date()
+    });
+
+    await transaction.save({ session });
+
+    for (const item of items) {
+      const inventoryItem = await Inventory.findOne({ item_id: item.item_id }).session(session);
+      
+      if (!inventoryItem) {
+        if (!item.name) throw new Error('New items require name');
+        const newItem = new Inventory({
+          item_id: item.item_id,
+          name: item.name,
+          category: item.category || 'uncategorized',
+          current_stock: item.quantity,
+          threshold: item.threshold || Math.floor(item.quantity * 0.2)
+        });
+        await newItem.save({ session });
+      } else {
+          inventoryItem.current_stock += item.quantity;
+          inventoryItem.last_restocked = new Date();
+          await inventoryItem.save({ session });
+        }
   
-    try {
-      const { items } = req.body;
-      const transaction = new Transaction({
-        transaction_id: `TXN-${Date.now()}`,
-        user_id: req.user._id || req.user.student_id,
-        type: 'restock',
-        date: new Date()
+        await new TransactionItem({
+          transaction_id: transaction.transaction_id,
+          item_id: item.item_id,
+          quantity: item.quantity
+        }).save({ session });
+      }
+  
+      await session.commitTransaction();
+      res.json({
+        success: true,
+        transaction_id: transaction.transaction_id,
+        updatedInventory: await Inventory.find()
       });
-  
-      await transaction.save({ session });
-  
-      for (const item of items) {
-        const inventoryItem = await Inventory.findOne({ item_id: item.item_id }).session(session);
-        
-        if (!inventoryItem) {
-          if (!item.name) throw new Error('New items require name');
-          const newItem = new Inventory({
-            item_id: item.item_id,
-            name: item.name,
-            category: item.category || 'uncategorized',
-            current_stock: item.quantity,
-            threshold: item.threshold || Math.floor(item.quantity * 0.2)
-          });
-          await newItem.save({ session });
-        } else {
-            inventoryItem.current_stock += item.quantity;
-            inventoryItem.last_restocked = new Date();
-            await inventoryItem.save({ session });
-          }
+    } catch (err) {
+      await session.abortTransaction();
+      res.status(400).json({ success: false, message: err.message });
+    } finally {
+      session.endSession();
+    }
+  });
     
+// =============== ORDER ROUTES ==================
+
+// Create a new order and update inventory
+app.post('/api/orders', async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  
+  try {
+    const { studentId, items } = req.body;
+
+    // Validate input
+    if (!studentId || !items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: 'Invalid order data' });
+    }
+
+
+    // Get current inventory for validation
+    const inventoryItems = await Inventory.find({
+      _id: { $in: items.map(item => item.itemId) }
+    }).session(session);
+
+    // Validate stock levels
+    for (const item of items) {
+      const inventoryItem = inventoryItems.find(i => i._id.toString() === item.itemId);
+      if (!inventoryItem) {
+        throw new Error(`Item ${item.itemId} not found`);
+      }
+      if (inventoryItem.current_stock < item.quantity) {
+        throw new Error(`Insufficient stock for item ${inventoryItem.name}`);
+      }
+    }
+
+    // Create order
+    const order = new Order({
+      studentId,
+      items: items.map(item => ({
+        itemId: item.itemId,
+        name: item.name,
+        quantity: item.quantity,
+        item_id: item.item_id
+      })),
+      status: 'completed'
+    });
+
+    // Update inventory for each item
+    const bulkOps = items.map(item => ({
+      updateOne: {
+        filter: { _id: item.itemId },
+        update: { 
+          $inc: { current_stock: -item.quantity },
+          $set: { last_restocked: new Date() }
+        },
+        session
+      }
+    }));
+
+    await Promise.all([
+      order.save({ session }),
+      Inventory.bulkWrite(bulkOps, { session })
+    ]);
+
+    await session.commitTransaction();
+    await session.endSession();
+
+    res.status(201).json({ message: 'Order created successfully', order });
+  } catch (error) {
+    await session.abortTransaction();
+    await session.endSession();
+    console.error('Error creating order:', error);
+    res.status(500).json({ message: 'Failed to create order', error: error.message });
+  }
+});
+
+// Get order history for a student
+app.get('/api/orders/student/:studentId', async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const orders = await Order.find({ studentId })
+      .sort({ createdAt: -1 });
+    res.json(orders);
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    res.status(500).json({ message: 'Failed to fetch orders' });
+  }
+});
+
+// =============== CART ROUTES ==================
+// Student Cart Endpoints (No Auth Required)
+    app.get('/cart/student', async (req, res) => {
+      try {
+        // For demo, we'll use a session-based cart
+        const cart = req.session.cart || [];
+        res.json({ items: cart });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.post('/cart/student/add', async (req, res) => {
+      try {
+        const { itemId, quantity = 1 } = req.body;
+        
+        // Get item details
+        const item = await Inventory.findOne({ _id: itemId });
+        if (!item) {
+          return res.status(404).json({ error: 'Item not found' });
+        }
+
+        // Initialize cart if it doesn't exist
+        if (!req.session.cart) {
+          req.session.cart = [];
+        }
+
+        // Check if item is already in cart
+        const existingItemIndex = req.session.cart.findIndex(i => i.itemId === itemId);
+        
+        if (existingItemIndex >= 0) {
+          // Update quantity if item exists
+          req.session.cart[existingItemIndex].quantity += quantity;
+        } else {
+          // Add new item to cart
+          req.session.cart.push({
+            itemId: item._id,
+            name: item.name,
+            quantity,
+            price: 0, // For future use
+            item_id: item.item_id // Include the item_id for reference
+          });
+        }
+
+        res.json({ success: true, cart: req.session.cart });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Update item quantity in student cart
+    app.put('/cart/student/item/:itemId', async (req, res) => {
+      try {
+        const { itemId } = req.params;
+        const { quantity } = req.body;
+
+        if (!req.session.cart) {
+          return res.status(404).json({ error: 'Cart not found' });
+        }
+
+        const itemIndex = req.session.cart.findIndex(item => item.itemId === itemId);
+        if (itemIndex === -1) {
+          return res.status(404).json({ error: 'Item not found in cart' });
+        }
+
+        // Update the quantity
+        req.session.cart[itemIndex].quantity = quantity;
+        
+        res.json({ 
+          success: true, 
+          cart: req.session.cart 
+        });
+      } catch (err) {
+        console.error('Error updating cart item:', err);
+        res.status(500).json({ error: 'Failed to update cart item' });
+      }
+    });
+
+    // Remove item from student cart
+    app.delete('/cart/student/item/:itemId', async (req, res) => {
+      try {
+        const { itemId } = req.params;
+
+        if (!req.session.cart) {
+          return res.status(404).json({ error: 'Cart not found' });
+        }
+
+        const initialLength = req.session.cart.length;
+        req.session.cart = req.session.cart.filter(item => item.itemId !== itemId);
+        
+        if (req.session.cart.length === initialLength) {
+          return res.status(404).json({ error: 'Item not found in cart' });
+        }
+
+        res.json({ 
+          success: true, 
+          cart: req.session.cart 
+        });
+      } catch (err) {
+        console.error('Error removing item from cart:', err);
+        res.status(500).json({ error: 'Failed to remove item from cart' });
+      }
+    });
+
+    // Checkout student cart
+    app.post('/cart/student/checkout', async (req, res) => {
+      const session = await mongoose.startSession();
+      session.startTransaction();
+
+      try {
+        if (!req.session.cart || req.session.cart.length === 0) {
+          return res.status(400).json({ 
+            success: false,
+            message: 'Cart is empty' 
+          });
+        }
+
+
+        // Create transaction record
+        const transaction = new Transaction({
+          transaction_id: `STU-${Date.now()}`,
+          user_id: 'student',
+          type: 'withdrawal',
+          date: new Date()
+        });
+
+        await transaction.save({ session });
+
+        // Process each item in cart
+        for (const item of req.session.cart) {
+          const inventoryItem = await Inventory.findOne({ _id: item.itemId }).session(session);
+          
+          if (!inventoryItem) {
+            throw new Error(`Item ${item.name} not found`);
+          }
+
+
+          if (inventoryItem.current_stock < item.quantity) {
+            throw new Error(`Not enough stock for ${item.name}`);
+          }
+
+
+          // Update inventory
+          inventoryItem.current_stock -= item.quantity;
+          await inventoryItem.save({ session });
+
+          // Record transaction item
           await new TransactionItem({
             transaction_id: transaction.transaction_id,
-            item_id: item.item_id,
-            quantity: item.quantity
+            item_id: inventoryItem.item_id,
+            quantity: -item.quantity // Negative for withdrawal
           }).save({ session });
         }
-    
+
+
+        // Clear cart after successful checkout
+        const cartItems = [...req.session.cart];
+        req.session.cart = [];
+
         await session.commitTransaction();
-        res.json({
-          success: true,
+        res.json({ 
+          success: true, 
           transaction_id: transaction.transaction_id,
-          updatedInventory: await Inventory.find()
+          message: 'Checkout successful',
+          items: cartItems
         });
       } catch (err) {
         await session.abortTransaction();
-        res.status(400).json({ success: false, message: err.message });
+        console.error('Checkout error:', err);
+        res.status(400).json({ 
+          success: false, 
+          message: err.message 
+        });
       } finally {
         session.endSession();
       }
     });
-    
-    // =============== CART ROUTES ==================
-    // Unified add-to-cart endpoint
-// Get cart contents
+
+    // Admin/Authenticated User Cart Endpoints
+    // Get cart contents
 app.get('/cart', authMiddleware, async (req, res) => {
     try {
       const userId = req.user.student_id || req.user._id.toString();

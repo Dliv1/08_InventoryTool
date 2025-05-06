@@ -1,26 +1,41 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
 
-const adminUsername = 'admin'; // Hardcoded admin username
-const adminPassword = 'admin123'; // Hardcoded admin password
+import { loginAdmin, registerAdmin } from './api/auth';
 
 function Dashboard() {
-  const [adminToken, setAdminToken] = useState(null);
+  const [token, setToken] = useState(localStorage.getItem('token'));
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
   // Handle login process
-  function handleLogin() {
-    if (username === adminUsername && password === adminPassword) {
-      setAdminToken('dummy-token'); // Simulate token setting on successful login
+  async function handleLogin() {
+    try {
+      const response = await loginAdmin(username, password);
+      const token = response.data.token;
+      setToken(token);
+      localStorage.setItem('token', token);
       setErrorMessage('');
-    } else {
-      setErrorMessage('Invalid username or password!');
+    } catch (error) {
+      setErrorMessage(error.response?.data?.message || 'Login failed');
     }
   }
 
-  return adminToken ? (
+  // Handle admin registration
+  async function handleRegister() {
+    try {
+      const response = await registerAdmin(username, password);
+      const token = response.data.token;
+      setToken(token);
+      localStorage.setItem('token', token);
+      setErrorMessage('');
+    } catch (error) {
+      setErrorMessage(error.response?.data?.message || 'Registration failed');
+    }
+  }
+
+  return token ? (
     <div className="dashboard-container">
       <div className="inventory-card">
         <h2 className="dashboard-title">Inventory Management</h2>
@@ -50,7 +65,10 @@ function Dashboard() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
-        <button onClick={handleLogin}>Login</button>
+        <div className="button-group">
+          <button onClick={handleLogin}>Login</button>
+          <button onClick={handleRegister}>Register</button>
+        </div>
       </div>
     </div>
   );
